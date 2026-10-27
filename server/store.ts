@@ -14,7 +14,12 @@ import {
   type StoredSession,
   type StoredUser,
 } from "./auth.js";
-import { builtinSkills, sampleAgents } from "./seed.js";
+import {
+  BUILTIN_SKILL_VERSION,
+  builtinSkills,
+  sampleAgents,
+  sampleAgentsV2,
+} from "./seed.js";
 
 export interface StoredSettings {
   mode: "demo" | "openai";
@@ -25,6 +30,8 @@ export interface StoredSettings {
 
 export interface StoreData {
   version: 2;
+  sampleSeedVersion: number;
+  builtinSkillVersion: number;
   users: StoredUser[];
   sessions: StoredSession[];
   agents: MainAgent[];
@@ -37,6 +44,8 @@ export const DATA_DIR = path.resolve("data");
 export const WORKSPACE_ROOT = path.join(DATA_DIR, "workspaces");
 const STORE_PATH = path.join(DATA_DIR, "store.json");
 const MAX_RUNS = 60;
+const SAMPLE_SEED_VERSION = 2;
+const CUSTOM_SKILL_PROMOTION_VERSION = 2;
 
 const defaultSettings = (): StoredSettings => ({
   mode: "demo",
@@ -88,6 +97,8 @@ function seededStore(): StoreData {
   }));
   return {
     version: 2,
+    sampleSeedVersion: SAMPLE_SEED_VERSION,
+    builtinSkillVersion: BUILTIN_SKILL_VERSION,
     users: [admin],
     sessions: [],
     agents,
@@ -113,6 +124,8 @@ function migrateToV2(parsed: Record<string, unknown>): StoreData {
   const legacyRuns = Array.isArray(parsed.runs) ? (parsed.runs as RunRecord[]) : [];
   return {
     version: 2,
+    sampleSeedVersion: 1,
+    builtinSkillVersion: 0,
     users: [admin],
     sessions: [],
     agents: legacyAgents.map((agent) => ({ ...agent, ownerId })),
@@ -120,6 +133,72 @@ function migrateToV2(parsed: Record<string, unknown>): StoreData {
     settings: { ...defaultSettings(), ...(parsed.settings ?? {}) },
     runs: legacyRuns.map((run) => ({ ...run, ownerId })),
   };
+}
+
+function ensureSampleAgents(data: StoreData): boolean {
+  if (data.sampleSeedVersion >= SAMPLE_SEED_VERSION) return false;
+  const admin = data.users.find((user) => user.id === ADMIN_USER_ID);
+  if (!admin) return false;
+  const now = new Date().toISOString();
+  const ownedIds = new Set(
+    data.agents.filter((agent) => agent.ownerId === admin.id).map((agent) => agent.id),
+  );
+  const added = sampleAgentsV2(now).filter((agent) => !ownedIds.has(agent.id));
+  data.agents.push(...added.map((agent) => ({ ...agent, ownerId: admin.id })));
+  data.sampleSeedVersion = SAMPLE_SEED_VERSION;
+  return true;
+}
+
+function ensureBuiltinSkills(data: StoreData): boolean {
+  if (data.builtinSkillVersion >= BUILTIN_SKILL_VERSION) return false;
+  const previousVersion = data.builtinSkillVersion;
+  const now = new Date().toISOString();
+  const fresh = builtinSkills(now);
+  const bySlug = new Map(fresh.map((skill) => [skill.slug, skill]));
+  let refreshed = false;
+  for (const skill of data.skills) {
+    const seed = bySlug.get(skill.slug);
+    if (!seed || (!skill.builtin && skill.id !== seed.id)) continue;
+    if (
+      skill.name === seed.name &&
+      skill.description === seed.description &&
+      skill.instructions === seed.instructions
+    ) {
+      continue;
+    }
+    skill.name = seed.name;
+    skill.description = seed.description;
+    skill.instructions = seed.instructions;
+    skill.updatedAt = now;
+    refreshed = true;
+  }
+  const admin = data.users.find((user) => user.id === ADMIN_USER_ID);
+  if (admin) {
+    const existingIds = new Set(data.skills.map((skill) => skill.id));
+    const existingSlugs = new Set(data.skills.map((skill) => skill.slug));
+    for (const seed of fresh) {
+      if (existingIds.has(seed.id) || existingSlugs.has(seed.slug)) continue;
+      data.skills.push({ ...seed, ownerId: admin.id, scripts: [] });
+      refreshed = true;
+    }
+  }
+  let promoted = 0;
+  if (previousVersion < CUSTOM_SKILL_PROMOTION_VERSION) {
+    for (const skill of data.skills) {
+      if (skill.builtin || skill.ownerId !== ADMIN_USER_ID) continue;
+      skill.builtin = true;
+      skill.updatedAt = now;
+      promoted += 1;
+    }
+  }
+  data.builtinSkillVersion = BUILTIN_SKILL_VERSION;
+  if (refreshed) {
+    console.log("store.json: 已更新内置技能为开源方法论文本");
+  }
+  if (promoted > 0) {
+    console.log(`store.json: 已将 ${promoted} 个自定义技能转为内置技能`);
+  }
+  return true;
 }
 
 async function load(): Promise<StoreData> {
@@ -131,18 +210,34 @@ async function load(): Promise<StoreData> {
     if (parsed.version !== 2 || !Array.isArray(parsed.users)) {
       cache = migrateToV2(parsed);
       console.log("store.json migrated to v2: seeded admin account, existing data assigned to admin");
-      await persist(cache);
-      return cache;
+    } else {
+      cache = {
+        version: 2,
+        sampleSeedVersion:
+          typeof parsed.sampleSeedVersion === "number" ? parsed.sampleSeedVersion : 1,
+        builtinSkillVersion:
+          typeof parsed.builtinSkillVersion === "number" ? parsed.builtinSkillVersion : 0,
+        users: parsed.users as StoredUser[],
+        sessions: Array.isArray(parsed.sessions) ? (parsed.sessions as StoredSession[]) : [],
+        agents: Array.isArray(parsed.agents) ? (parsed.agents as MainAgent[]) : [],
+        skills: normalizeSkills(Array.isArray(parsed.skills) ? (parsed.skills as Skill[]) : []),
+        settings: { ...defaultSettings(), ...(parsed.settings ?? {}) },
+        runs: Array.isArray(parsed.runs) ? (parsed.runs as RunRecord[]) : [],
+      };
     }
-    cache = {
-      version: 2,
-      users: parsed.users as StoredUser[],
-      sessions: Array.isArray(parsed.sessions) ? (parsed.sessions as StoredSession[]) : [],
-      agents: Array.isArray(parsed.agents) ? (parsed.agents as MainAgent[]) : [],
-      skills: normalizeSkills(Array.isArray(parsed.skills) ? (parsed.skills as Skill[]) : []),
-      settings: { ...defaultSettings(), ...(parsed.settings ?? {}) },
-      runs: Array.isArray(parsed.runs) ? (parsed.runs as RunRecord[]) : [],
-    };
+    const samplesAdded = ensureSampleAgents(cache);
+    if (samplesAdded) {
+      console.log("store.json: 已补种内置示例智能体（开源调研组、代码审查组）");
+    }
+    const builtinsRefreshed = ensureBuiltinSkills(cache);
+    if (
+      samplesAdded ||
+      builtinsRefreshed ||
+      parsed.version !== 2 ||
+      !Array.isArray(parsed.users)
+    ) {
+      await persist(cache);
+    }
     return cache;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
