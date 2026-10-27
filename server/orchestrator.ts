@@ -33,6 +33,20 @@ interface TaskInvocation {
 }
 
 const MAX_ARTIFACT_BYTES = 512 * 1024;
+const DEFAULT_RECURSION_LIMIT = 10_000;
+const MAX_RECURSION_LIMIT = 100_000;
+
+function resolveRecursionLimit(): number {
+  const raw = Number(process.env.AGENT_RECURSION_LIMIT);
+  if (!Number.isInteger(raw) || raw < 20) return DEFAULT_RECURSION_LIMIT;
+  return Math.min(raw, MAX_RECURSION_LIMIT);
+}
+
+function formatRunError(message: string): string {
+  const match = /recursion limit of (\d+) reached/i.exec(message);
+  if (!match) return message;
+  return `运行步骤达到上限（${match[1]} 步），任务可能过于复杂或出现循环。请拆分任务，或设置环境变量 AGENT_RECURSION_LIMIT 提高上限后重试。`;
+}
 
 function messageType(message: unknown): string {
   if (!message || typeof message !== "object") return "";
@@ -153,13 +167,14 @@ function subagentSystemPrompt(agent: MainAgent, subagent: MainAgent["subagents"]
     `## 交付约定`,
     `- 只处理主智能体分派给你的部分，不要重复其他角色的工作。`,
     `- 以 Markdown 输出：结论摘要、关键发现、交付建议、风险与待确认。`,
-    `- 需要沉淀为文件时写入 /artifacts/ 目录。`,
+    `- 需要沉淀为文件时写入 artifacts/ 目录（工作区相对路径）。`,
     `- 不确定的信息明确标注为假设，不要臆造事实或数据。`,
     ``,
     `## 技能脚本`,
-    `- 部分技能目录（/skills/<slug>/）下附带脚本文件，SKILL.md 末尾有脚本清单。`,
+    `- 部分技能目录（skills/<slug>/）下附带脚本文件，SKILL.md 末尾有脚本清单。`,
     `- 运行脚本前先用 read_file 阅读脚本内容，确认用途后再用 execute 工具执行。`,
-    `- 运行命令以技能目录为工作目录，例如 \`python /skills/<slug>/main.py\`。`,
+    `- execute 的工作目录是工作区根目录，命令里的路径一律写工作区相对路径（不带开头斜杠），例如 \`python skills/<slug>/main.py\`；不要使用 /skills/ 或 /artifacts/ 开头的路径，Windows 上这些路径不存在。`,
+    `- 同一条命令连续执行两次仍失败时停止重试：先 read_file 确认脚本与路径，仍无法解决就向主智能体报告原因与证据，不要反复执行相同命令。`,
     `- 脚本输出要整理进交付物，并注明数据来源。`,
   ].join("\n");
 }
@@ -430,7 +445,7 @@ export async function executeRun(input: ExecuteRunInput): Promise<RunRecord> {
           const filePath =
             call.args && typeof call.args.file_path === "string" ? call.args.file_path : "";
           if (call.name === "write_file") {
-            addActivity(lane, `写入交付物：${filePath || "/artifacts/"}`);
+            addActivity(lane, `写入交付物：${filePath || "artifacts/"}`);
           } else if (call.name === "read_file" && filePath) {
             addActivity(lane, `读取参考文件：${filePath}`);
           } else if (call.name === "edit_file" && filePath) {
@@ -472,7 +487,7 @@ export async function executeRun(input: ExecuteRunInput): Promise<RunRecord> {
         .map((id) => skillsById.get(id)?.slug)
         .map((slug) => (slug ? safeSlug(slug) : ""))
         .filter(Boolean)
-        .map((slug) => `/skills/${slug}/`);
+        .map((slug) => `skills/${slug}/`);
 
     const allSkillPaths = Array.from(
       new Set(agent.subagents.flatMap((subagent) => skillPaths(subagent))),
@@ -504,7 +519,11 @@ export async function executeRun(input: ExecuteRunInput): Promise<RunRecord> {
           },
         ],
       },
-      { streamMode: "updates", subgraphs: true, recursionLimit: 80 },
+      {
+        streamMode: "updates",
+        subgraphs: true,
+        recursionLimit: resolveRecursionLimit(),
+      },
     );
 
     let chunkCount = 0;
@@ -594,11 +613,11 @@ export async function executeRun(input: ExecuteRunInput): Promise<RunRecord> {
       }
     }
     run.status = "failed";
-    run.error = message;
+    run.error = formatRunError(message);
     run.finishedAt = now;
     run.durationMs = Math.max(0, Date.parse(now) - startedMs);
     await saveRun(run).catch(() => undefined);
-    send({ type: "run_failed", run: structuredClone(run), message });
+    send({ type: "run_failed", run: structuredClone(run), message: run.error });
     console.error(`[run ${run.id}] failed: ${message}`);
     return run;
   }

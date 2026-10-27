@@ -21,6 +21,15 @@ const TEXT_EXTENSIONS = new Set([
   ".xml", ".env", ".properties", ".md",
 ]);
 
+function safeSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
 function scriptLanguage(fileName: string): string {
   const ext = path.extname(fileName).toLowerCase();
   switch (ext) {
@@ -160,19 +169,21 @@ export function buildSkillScripts(
 export function scriptManifestSection(skill: Skill): string {
   const scripts = skill.scripts ?? [];
   if (scripts.length === 0) return "";
+  const slug = safeSlug(skill.slug);
+  const relPath = (p: string) => (slug ? `skills/${slug}/${p}` : p);
   const lines = scripts.map(
-    (script) => `- \`${script.path}\`（${script.language}，${formatBytes(script.size)}）`,
+    (script) => `- \`${relPath(script.path)}\`（${script.language}，${formatBytes(script.size)}）`,
   );
   return [
     `## 附带脚本文件`,
     ``,
-    `本技能附带 ${scripts.length} 个脚本文件，存放在本技能目录下：`,
+    `本技能附带 ${scripts.length} 个脚本文件，位于工作区 ${slug ? `\`skills/${slug}/\` 目录` : "本技能目录"}下：`,
     ``,
     ...lines,
     ``,
     `使用方式：`,
     `1. 先用 read_file 阅读脚本内容，确认输入、输出与副作用。`,
-    `2. 用 execute 工具在技能目录内运行，例如 \`python ${scripts[0].path}\` 或 \`node ${scripts[0].path}\`。`,
+    `2. execute 的工作目录是工作区根目录，运行命令使用工作区相对路径（不带开头斜杠），例如 \`python ${relPath(scripts[0].path)}\` 或 \`node ${relPath(scripts[0].path)}\`。`,
     `3. 把脚本输出整理进交付物，注明数据来源与运行时间。`,
   ].join("\n");
 }

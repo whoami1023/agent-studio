@@ -340,7 +340,7 @@ export class DemoChatModel extends BaseChatModel {
               `职责说明：${subagent.description}`,
               "",
               "请完成该角色对应的部分，并以 Markdown 输出：结论摘要、关键发现、交付建议、风险与待确认。",
-              `如果产出适合作为文件，请写入 /artifacts/${artifactSlug}.md。`,
+              `如果产出适合作为文件，请写入 artifacts/${artifactSlug}.md（工作区相对路径，不要带开头斜杠）。`,
             ].join("\n"),
           },
         })),
@@ -535,7 +535,7 @@ export class DemoChatModel extends BaseChatModel {
             id: callId("write"),
             name: "write_file",
             args: {
-              file_path: `/artifacts/${artifactSlug}.md`,
+              file_path: `artifacts/${artifactSlug}.md`,
               content: `${header}${this.cachedDeliverable}\n`,
             },
           },
