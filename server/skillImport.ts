@@ -17,18 +17,36 @@ export interface ParsedSkillZip {
   instructions: string;
   scripts: SkillScript[];
   skipped: string[];
+  slugCandidates: string[];
 }
 
-function stripCommonRoot<T extends { path: string }>(entries: T[]): T[] {
+const SLUG_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
+
+export function slugFromName(value: string): string | null {
+  const slug = value
+    .toLowerCase()
+    .slice(0, 32)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return SLUG_PATTERN.test(slug) ? slug : null;
+}
+
+function commonRootSegments<T extends { path: string }>(entries: T[]): number {
   const segments = entries.map((entry) => entry.path.split("/"));
   const first = segments[0] ?? [];
   let common = 0;
   while (
-    common < first.length &&
+    common < first.length - 1 &&
     segments.every((seg) => seg.length > common && seg[common] === first[common])
   ) {
     common += 1;
   }
+  return common;
+}
+
+function stripCommonRoot<T extends { path: string }>(entries: T[]): T[] {
+  const common = commonRootSegments(entries);
   if (common === 0) return entries;
   return entries.map((entry) => ({
     ...entry,
@@ -102,7 +120,9 @@ export function parseSkillZip(fileName: string, data: Uint8Array): ParsedSkillZi
   const frontmatter = doc ? parseFrontmatter(doc.content) : {};
   const fallbackName = path.basename(fileName.replace(/\.zip$/i, "")).trim();
   const rootName =
-    files.length > 0 ? files[0].path.split("/")[0] : "";
+    files.length > 0
+      ? files[0].path.split("/").slice(0, commonRootSegments(files)).join("/")
+      : "";
   const name = frontmatter.name || rootName || fallbackName || "导入技能";
   const description =
     frontmatter.description ||
@@ -117,11 +137,20 @@ export function parseSkillZip(fileName: string, data: Uint8Array): ParsedSkillZi
   const nonDocFiles = stripped.filter((file) => !file.path.toLowerCase().endsWith(".md"));
   const { scripts, skipped: scriptSkipped } = buildSkillScripts(nonDocFiles);
 
+  const slugCandidates = Array.from(
+    new Set(
+      [name, rootName, fallbackName]
+        .map((value) => slugFromName(value))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+
   return {
     name: name.slice(0, 40),
     description: description.slice(0, 400),
     instructions: instructions.slice(0, 12000),
     scripts,
     skipped: [...skipped, ...scriptSkipped],
+    slugCandidates,
   };
 }

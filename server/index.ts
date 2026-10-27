@@ -472,9 +472,27 @@ app.post("/api/skills/import", async (req, res) => {
   );
   const name = (parsed.data.name || parsedZip.name).slice(0, 40);
   const description = (parsed.data.description || parsedZip.description).slice(0, 400);
-  let slug = createId("skill");
-  while (existingSlugs.has(slug)) {
+  const withSuffix = (base: string, n: number) => {
+    const suffix = `-${n}`;
+    return base.slice(0, 32 - suffix.length) + suffix;
+  };
+  let slug = parsedZip.slugCandidates.find((candidate) => !existingSlugs.has(candidate)) ?? "";
+  if (!slug) {
+    outer: for (const candidate of parsedZip.slugCandidates) {
+      for (let n = 2; n < 100; n++) {
+        const suffixed = withSuffix(candidate, n);
+        if (!existingSlugs.has(suffixed)) {
+          slug = suffixed;
+          break outer;
+        }
+      }
+    }
+  }
+  if (!slug) {
     slug = createId("skill");
+    while (existingSlugs.has(slug)) {
+      slug = createId("skill");
+    }
   }
   const now = new Date().toISOString();
   const skill: Skill = {
