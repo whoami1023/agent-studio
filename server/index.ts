@@ -37,6 +37,7 @@ import {
   type StoredSettings,
 } from "./store.js";
 import { executeRun } from "./orchestrator.js";
+import { suggestSubagents } from "./suggestSubagents.js";
 import {
   normalizeScripts,
   runScriptInDir,
@@ -324,6 +325,29 @@ app.post("/api/agents", async (req, res) => {
     data.agents.unshift(agent);
   });
   res.status(201).json({ agent });
+});
+
+const SuggestSchema = z.object({
+  name: z.string().trim().min(1, "智能体名称不能为空").max(40, "智能体名称过长"),
+  description: z.string().trim().min(1, "智能体描述不能为空").max(400, "智能体描述过长"),
+  systemPrompt: z.string().max(6000, "系统提示词过长").optional(),
+});
+
+app.post("/api/agents/suggest-subagents", async (req, res) => {
+  const parsed = SuggestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    userError(res, 400, formatIssues(parsed.error));
+    return;
+  }
+  const store = await readStore();
+  const user = req.user!;
+  const ownSkills = store.skills.filter((skill) => skill.ownerId === user.id);
+  try {
+    const result = await suggestSubagents(parsed.data, store.settings, ownSkills);
+    res.json(result);
+  } catch (error) {
+    userError(res, 500, error instanceof Error ? error.message : "推荐子智能体失败");
+  }
 });
 
 app.put("/api/agents/:id", async (req, res) => {

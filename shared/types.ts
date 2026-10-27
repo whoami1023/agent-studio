@@ -176,6 +176,24 @@ export interface SubAgentInput {
   skillIds?: string[];
 }
 
+export interface SubagentSuggestPayload {
+  name: string;
+  description: string;
+  systemPrompt?: string;
+}
+
+export interface SubagentSuggestion {
+  name: string;
+  description: string;
+  systemPrompt?: string;
+  skillIds: string[];
+}
+
+export interface SubagentSuggestResult {
+  subagents: SubagentSuggestion[];
+  source: "demo" | "model";
+}
+
 export interface SkillInput {
   name: string;
   slug?: string;

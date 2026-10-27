@@ -13,6 +13,8 @@ import type {
   SettingsUpdate,
   Skill,
   SkillInput,
+  SubagentSuggestPayload,
+  SubagentSuggestResult,
 } from "../shared/types";
 
 const TOKEN_KEY = "agent-studio.token";
@@ -87,6 +89,12 @@ export const api = {
   getRun: (id: string) => request<RunDetail>(`/api/runs/${encodeURIComponent(id)}`),
   createAgent: (input: AgentInput) =>
     request<{ agent: MainAgent }>("/api/agents", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(input),
+    }),
+  suggestSubagents: (input: SubagentSuggestPayload) =>
+    request<SubagentSuggestResult>("/api/agents/suggest-subagents", {
       method: "POST",
       headers: jsonHeaders,
       body: JSON.stringify(input),

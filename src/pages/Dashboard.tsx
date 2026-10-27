@@ -11,7 +11,7 @@ import {
   Wand2,
   Waypoints,
 } from "lucide-react";
-import type { MainAgent } from "../../shared/types";
+import type { MainAgent, SubagentSuggestion } from "../../shared/types";
 import { api } from "../api";
 import { useApp } from "../state";
 import {
@@ -55,14 +55,37 @@ export function Dashboard() {
     if (!form.name.trim() || !form.description.trim() || busy) return;
     setBusy(true);
     try {
-      const result = await api.createAgent({
+      const input = {
         name: form.name.trim(),
         description: form.description.trim(),
         systemPrompt: form.systemPrompt.trim(),
+      };
+      let suggestions: SubagentSuggestion[] = [];
+      let source: "demo" | "model" | null = null;
+      try {
+        const result = await api.suggestSubagents(input);
+        suggestions = result.subagents;
+        source = result.source;
+      } catch {
+        // 推荐失败不阻塞创建
+      }
+      const result = await api.createAgent({
+        ...input,
+        subagents: suggestions.map((suggestion) => ({
+          name: suggestion.name,
+          description: suggestion.description,
+          systemPrompt: suggestion.systemPrompt,
+          skillIds: suggestion.skillIds,
+        })),
       });
       await refresh();
       setCreateOpen(false);
-      notify("主智能体已创建，接下来添加子智能体", "success");
+      notify(
+        suggestions.length > 0
+          ? `已生成 ${suggestions.length} 个推荐子智能体（${source === "model" ? "模型生成" : "内置模板"}），可随时修改`
+          : "主智能体已创建，接下来添加子智能体",
+        "success",
+      );
       navigate(`/agents/${result.agent.id}`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "创建失败", "error");
@@ -326,7 +349,7 @@ export function Dashboard() {
         eyebrow="New agent"
         footer={
           <>
-            <span className="modal-foot-note">创建后可继续添加子智能体</span>
+            <span className="modal-foot-note">将根据描述自动推荐子智能体编队</span>
             <div className="modal-foot-actions">
               <button
                 type="button"
@@ -342,7 +365,7 @@ export function Dashboard() {
                 onClick={handleCreate}
                 disabled={busy || !form.name.trim() || !form.description.trim()}
               >
-                {busy ? "创建中…" : "创建并编排"}
+                {busy ? "生成推荐编队中…" : "创建并编排"}
               </button>
             </div>
           </>
@@ -387,7 +410,7 @@ export function Dashboard() {
           </label>
           <div className="form-hint-card">
             <Sparkles size={15} />
-            下一步会进入编排页，可添加子智能体、为每个子智能体设置描述与技能。
+            点击「创建并编排」会根据描述与系统提示词自动推荐子智能体编队，创建后可在编排页逐个修改。
           </div>
         </div>
       </Modal>
