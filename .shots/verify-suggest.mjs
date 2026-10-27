@@ -92,7 +92,7 @@ async function shot(name) {
 }
 
 await send("Page.enable");
-await send("Page.navigate", { url: "http://localhost:5173/" });
+await send("Page.navigate", { url: "http://localhost:5273/" });
 await waitFor(`document.querySelector(".login-card") !== null`);
 await evaluate(fillInput('.login-card input:not([type="password"])', "admin"));
 await evaluate(fillInput('input[type="password"]', "admin123"));

@@ -54,7 +54,7 @@ declare global {
   }
 }
 
-const PORT = Number(process.env.PORT ?? 8787);
+const PORT = Number(process.env.PORT ?? 8689);
 const HOST = process.env.HOST ?? "127.0.0.1";
 
 const app = express();

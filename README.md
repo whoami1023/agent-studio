@@ -22,8 +22,8 @@ npm install
 npm run dev
 ```
 
-- Web 界面：<http://localhost:5173>
-- API 服务：<http://127.0.0.1:8787>
+- Web 界面：<http://localhost:5273>
+- API 服务：<http://127.0.0.1:8689>
 
 用默认管理员 `admin` / `admin123` 登录（首次启动自动创建，建议登录后在「管理」中修改密码）。
 
@@ -32,8 +32,8 @@ npm run dev
 | 命令 | 说明 |
 | --- | --- |
 | `npm run dev` | 同时启动 API（tsx watch）与前端（Vite） |
-| `npm run dev:api` | 仅启动 API 服务（`127.0.0.1:8787`） |
-| `npm run dev:web` | 仅启动前端（`http://localhost:5173`） |
+| `npm run dev:api` | 仅启动 API 服务（`127.0.0.1:8689`） |
+| `npm run dev:web` | 仅启动前端（`http://localhost:5273`） |
 | `npm run build` | 类型检查 + 构建产物到 `dist/` |
 | `npm start` | 以生产模式启动服务（同时托管 API 与 `dist/` 静态文件） |
 | `npm run typecheck` | 仅类型检查 |

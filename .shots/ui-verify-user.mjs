@@ -91,7 +91,7 @@ function fillInput(selector, value) {
 
 // Login as wangwu
 await send("Page.enable");
-await send("Page.navigate", { url: "http://localhost:5173/" });
+await send("Page.navigate", { url: "http://localhost:5273/" });
 await waitFor(`document.querySelector(".login-card") !== null`);
 await evaluate(fillInput('.login-card input:not([type="password"])', "wangwu"));
 await evaluate(fillInput('input[type="password"]', "ww123456"));
@@ -103,7 +103,7 @@ console.log("has /admin nav:", await evaluate(`[...document.querySelectorAll("a"
 await screenshot("10-wangwu-dashboard");
 
 // Direct navigate to /admin should redirect away
-await send("Page.navigate", { url: "http://localhost:5173/admin" });
+await send("Page.navigate", { url: "http://localhost:5273/admin" });
 await sleep(800);
 const onAdmin = await evaluate(`location.pathname`);
 console.log("path after /admin attempt:", onAdmin);

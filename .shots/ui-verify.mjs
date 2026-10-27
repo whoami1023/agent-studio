@@ -99,7 +99,7 @@ function fillInput(selector, value) {
 
 // 1. Load login page
 await send("Page.enable");
-await send("Page.navigate", { url: "http://localhost:5173/" });
+await send("Page.navigate", { url: "http://localhost:5273/" });
 await waitFor(`document.querySelector(".login-card") !== null`);
 await sleep(400);
 console.log("login page:", await evaluate(`document.querySelector(".login-title")?.textContent`));
@@ -123,7 +123,7 @@ const hasAdminNav = await evaluate(`[...document.querySelectorAll("a")].some(a=>
 console.log("admin nav visible:", hasAdminNav);
 
 // 4. Admin page
-await send("Page.navigate", { url: "http://localhost:5173/admin" });
+await send("Page.navigate", { url: "http://localhost:5273/admin" });
 await waitFor(`document.querySelector(".admin-head") !== null || document.querySelector("table") !== null`);
 await sleep(500);
 const rows = await evaluate(`[...document.querySelectorAll(".admin-row")].map(r=>r.textContent.replace(/\\s+/g," ").trim())`);
