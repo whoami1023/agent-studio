@@ -6,6 +6,14 @@ import type {
   RunRecord,
   Skill,
 } from "../shared/types.js";
+import {
+  ADMIN_USER_ID,
+  DEFAULT_ADMIN_PASSWORD,
+  DEFAULT_ADMIN_USERNAME,
+  hashPassword,
+  type StoredSession,
+  type StoredUser,
+} from "./auth.js";
 import { builtinSkills, sampleAgents } from "./seed.js";
 
 export interface StoredSettings {
@@ -16,7 +24,9 @@ export interface StoredSettings {
 }
 
 export interface StoreData {
-  version: 1;
+  version: 2;
+  users: StoredUser[];
+  sessions: StoredSession[];
   agents: MainAgent[];
   skills: Skill[];
   settings: StoredSettings;
@@ -34,12 +44,54 @@ const defaultSettings = (): StoredSettings => ({
   model: "gpt-4o-mini",
 });
 
+function createAdminUser(): StoredUser {
+  const now = new Date().toISOString();
+  const { salt, hash } = hashPassword(DEFAULT_ADMIN_PASSWORD);
+  return {
+    id: ADMIN_USER_ID,
+    username: DEFAULT_ADMIN_USERNAME,
+    displayName: "管理员",
+    role: "admin",
+    passwordSalt: salt,
+    passwordHash: hash,
+    disabled: false,
+    createdAt: now,
+  };
+}
+
+function normalizeSkills(skills: Skill[]): Skill[] {
+  return skills.map((skill) => ({
+    ...skill,
+    scripts: Array.isArray(skill.scripts)
+      ? skill.scripts.filter(
+          (script) =>
+            script &&
+            typeof script.path === "string" &&
+            typeof script.content === "string" &&
+            typeof script.size === "number",
+        )
+      : [],
+  }));
+}
+
 function seededStore(): StoreData {
   const now = new Date().toISOString();
+  const admin = createAdminUser();
+  const skills = builtinSkills(now).map((skill) => ({
+    ...skill,
+    ownerId: admin.id,
+    scripts: [],
+  }));
+  const agents = sampleAgents(now).map((agent) => ({
+    ...agent,
+    ownerId: admin.id,
+  }));
   return {
-    version: 1,
-    agents: sampleAgents(now),
-    skills: builtinSkills(now),
+    version: 2,
+    users: [admin],
+    sessions: [],
+    agents,
+    skills,
     settings: defaultSettings(),
     runs: [],
   };
@@ -53,18 +105,43 @@ async function ensureDirs(): Promise<void> {
   await fs.mkdir(WORKSPACE_ROOT, { recursive: true });
 }
 
+function migrateToV2(parsed: Record<string, unknown>): StoreData {
+  const admin = createAdminUser();
+  const ownerId = admin.id;
+  const legacyAgents = Array.isArray(parsed.agents) ? (parsed.agents as MainAgent[]) : [];
+  const legacySkills = Array.isArray(parsed.skills) ? (parsed.skills as Skill[]) : [];
+  const legacyRuns = Array.isArray(parsed.runs) ? (parsed.runs as RunRecord[]) : [];
+  return {
+    version: 2,
+    users: [admin],
+    sessions: [],
+    agents: legacyAgents.map((agent) => ({ ...agent, ownerId })),
+    skills: normalizeSkills(legacySkills).map((skill) => ({ ...skill, ownerId })),
+    settings: { ...defaultSettings(), ...(parsed.settings ?? {}) },
+    runs: legacyRuns.map((run) => ({ ...run, ownerId })),
+  };
+}
+
 async function load(): Promise<StoreData> {
   if (cache) return cache;
   await ensureDirs();
   try {
     const raw = await fs.readFile(STORE_PATH, "utf8");
-    const parsed = JSON.parse(raw) as Partial<StoreData>;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (parsed.version !== 2 || !Array.isArray(parsed.users)) {
+      cache = migrateToV2(parsed);
+      console.log("store.json migrated to v2: seeded admin account, existing data assigned to admin");
+      await persist(cache);
+      return cache;
+    }
     cache = {
-      version: 1,
-      agents: Array.isArray(parsed.agents) ? parsed.agents : [],
-      skills: Array.isArray(parsed.skills) ? parsed.skills : [],
+      version: 2,
+      users: parsed.users as StoredUser[],
+      sessions: Array.isArray(parsed.sessions) ? (parsed.sessions as StoredSession[]) : [],
+      agents: Array.isArray(parsed.agents) ? (parsed.agents as MainAgent[]) : [],
+      skills: normalizeSkills(Array.isArray(parsed.skills) ? (parsed.skills as Skill[]) : []),
       settings: { ...defaultSettings(), ...(parsed.settings ?? {}) },
-      runs: Array.isArray(parsed.runs) ? parsed.runs : [],
+      runs: Array.isArray(parsed.runs) ? (parsed.runs as RunRecord[]) : [],
     };
     return cache;
   } catch (error) {

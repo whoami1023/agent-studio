@@ -1,18 +1,18 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
-  AlertTriangle,
   History,
   LayoutGrid,
   Library,
-  Network,
+  LogOut,
   Paperclip,
   Plus,
-  RefreshCw,
   Settings2,
+  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 import { useApp } from "../state";
 import { cx, initials } from "../lib/format";
+import { BootScreen } from "./BootScreen";
 import { SettingsDialog } from "./SettingsDialog";
 
 const NAV = [
@@ -25,6 +25,7 @@ function pageMeta(pathname: string): { section: string; label: string } {
   if (pathname === "/") return { section: "Workspace", label: "工作台" };
   if (pathname === "/skills") return { section: "Workspace", label: "技能库" };
   if (pathname === "/runs") return { section: "Workspace", label: "运行记录" };
+  if (pathname === "/admin") return { section: "Admin", label: "账户管理" };
   if (/^\/runs\/[^/]+$/.test(pathname)) return { section: "Run", label: "运行详情" };
   if (/^\/agents\/[^/]+\/run$/.test(pathname)) return { section: "Agent", label: "任务运行" };
   if (/^\/agents\/[^/]+$/.test(pathname)) return { section: "Agent", label: "智能体编排" };
@@ -32,42 +33,17 @@ function pageMeta(pathname: string): { section: string; label: string } {
 }
 
 export function Layout() {
-  const { loading, loadError, settings, setSettingsOpen, refresh, agents } = useApp();
+  const { loading, loadError, user, logout, settings, setSettingsOpen, refresh, agents } =
+    useApp();
   const { pathname } = useLocation();
   const meta = pageMeta(pathname);
 
   if (loading) {
-    return (
-      <div className="boot-screen">
-        <div className="brand-mark brand-mark-lg">
-          <Paperclip size={20} />
-        </div>
-        <div className="boot-copy">
-          <span className="boot-title">Agent Studio</span>
-          <span className="boot-sub">正在连接编排中枢…</span>
-        </div>
-        <div className="boot-bar">
-          <span />
-        </div>
-      </div>
-    );
+    return <BootScreen />;
   }
 
   if (loadError && agents.length === 0) {
-    return (
-      <div className="boot-screen boot-error">
-        <div className="boot-error-icon">
-          <AlertTriangle size={20} />
-        </div>
-        <h1>无法连接本地服务</h1>
-        <p>{loadError}</p>
-        <button type="button" className="btn btn-primary" onClick={() => void refresh()}>
-          <RefreshCw size={15} />
-          重试连接
-        </button>
-        <span className="boot-hint">请确认已在项目目录运行 npm run dev</span>
-      </div>
-    );
+    return <BootScreen error={loadError} onRetry={() => void refresh()} />;
   }
 
   return (
@@ -105,6 +81,19 @@ export function Layout() {
             );
           })}
         </nav>
+
+        {user?.role === "admin" ? (
+          <nav className="nav nav-admin" aria-label="管理导航">
+            <span className="nav-label">管理</span>
+            <NavLink
+              to="/admin"
+              className={({ isActive }) => cx("nav-link", isActive && "is-active")}
+            >
+              <ShieldCheck size={15} strokeWidth={1.8} />
+              <span>账户管理</span>
+            </NavLink>
+          </nav>
+        ) : null}
 
         <div className="sidebar-agents">
           <div className="sidebar-agents-head">
@@ -152,6 +141,27 @@ export function Layout() {
             </span>
             <Settings2 size={14} className="provider-settings" />
           </button>
+
+          <div className="sidebar-user">
+            <span className="user-avatar">
+              {initials(user?.displayName || user?.username || "?")}
+            </span>
+            <span className="user-copy">
+              <span className="user-name">{user?.displayName}</span>
+              <span className="user-meta mono">
+                {user?.role === "admin" ? "管理员" : `@${user?.username}`}
+              </span>
+            </span>
+            <button
+              type="button"
+              className="icon-btn icon-btn-sm"
+              onClick={() => void logout()}
+              aria-label="退出登录"
+              title="退出登录"
+            >
+              <LogOut size={14} />
+            </button>
+          </div>
 
           <div className="sidebar-meta">
             <Sparkles size={11} />

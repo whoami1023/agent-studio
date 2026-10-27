@@ -12,10 +12,11 @@ import type {
   BootstrapPayload,
   MainAgent,
   PublicSettings,
+  PublicUser,
   RunRecord,
   Skill,
 } from "../shared/types";
-import { api } from "./api";
+import { api, ApiError, setToken } from "./api";
 import { cx } from "./lib/format";
 
 type ToastTone = "info" | "success" | "error";
@@ -40,6 +41,7 @@ interface Toast {
 }
 
 interface AppContextValue {
+  user: PublicUser | null;
   agents: MainAgent[];
   skills: Skill[];
   runs: RunRecord[];
@@ -47,6 +49,8 @@ interface AppContextValue {
   loading: boolean;
   loadError: string | null;
   refresh: () => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
   notify: (message: string, tone?: ToastTone) => void;
   applySettings: (settings: PublicSettings) => void;
   settingsOpen: boolean;
@@ -67,6 +71,7 @@ const AppContext = createContext<AppContextValue | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<BootstrapPayload | null>(null);
+  const [user, setUser] = useState<PublicUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -88,9 +93,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       const payload = await api.bootstrap();
       setData(payload);
+      setUser(payload.user);
       setLoadError(null);
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "无法加载工作区");
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        setToken(null);
+        setUser(null);
+        setData(null);
+      } else {
+        setLoadError(error instanceof Error ? error.message : "无法加载工作区");
+      }
     } finally {
       setLoading(false);
     }
@@ -99,6 +111,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const login = useCallback(
+    async (username: string, password: string) => {
+      const result = await api.login(username, password);
+      setToken(result.token);
+      setLoadError(null);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  const logout = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      // session may already be invalid; local cleanup still proceeds
+    }
+    setToken(null);
+    setUser(null);
+    setData(null);
+    setLoadError(null);
+  }, []);
 
   const notify = useCallback((message: string, tone: ToastTone = "info") => {
     const id = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -114,6 +148,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AppContextValue>(
     () => ({
+      user,
       agents: data?.agents ?? [],
       skills: data?.skills ?? [],
       runs: data?.runs ?? [],
@@ -121,6 +156,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       loading,
       loadError,
       refresh,
+      login,
+      logout,
       notify,
       applySettings,
       settingsOpen,
@@ -128,7 +165,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       theme,
       setTheme,
     }),
-    [data, loading, loadError, refresh, notify, applySettings, settingsOpen, theme],
+    [
+      user,
+      data,
+      loading,
+      loadError,
+      refresh,
+      login,
+      logout,
+      notify,
+      applySettings,
+      settingsOpen,
+      theme,
+    ],
   );
 
   return (

@@ -1,9 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { createDeepAgent, FilesystemBackend, type SubAgent } from "deepagents";
+import { createDeepAgent, LocalShellBackend, type SubAgent } from "deepagents";
 import { ChatOpenAI } from "@langchain/openai";
 import { todoListMiddleware } from "langchain";
-import YAML from "yaml";
 import type {
   ArtifactFile,
   ArtifactRef,
@@ -16,6 +15,7 @@ import type {
 } from "../shared/types.js";
 import { DemoChatModel } from "./demoModel.js";
 import { getWorkspacePath, pruneWorkspaces, saveRun, type StoredSettings } from "./store.js";
+import { writeSkillFiles } from "./scriptRunner.js";
 
 interface ExecuteRunInput {
   run: RunRecord;
@@ -113,17 +113,7 @@ async function materializeSkills(workspace: string, skills: Skill[]): Promise<vo
   for (const skill of skills) {
     const slug = safeSlug(skill.slug);
     if (!slug) continue;
-    const dir = path.join(workspace, "skills", slug);
-    await fs.mkdir(dir, { recursive: true });
-    const frontmatter = YAML.stringify({
-      name: slug,
-      description: skill.description,
-    });
-    await fs.writeFile(
-      path.join(dir, "SKILL.md"),
-      `---\n${frontmatter}---\n\n${skill.instructions}\n`,
-      "utf8",
-    );
+    await writeSkillFiles(skill, path.join(workspace, "skills", slug));
   }
 }
 
@@ -165,6 +155,12 @@ function subagentSystemPrompt(agent: MainAgent, subagent: MainAgent["subagents"]
     `- 以 Markdown 输出：结论摘要、关键发现、交付建议、风险与待确认。`,
     `- 需要沉淀为文件时写入 /artifacts/ 目录。`,
     `- 不确定的信息明确标注为假设，不要臆造事实或数据。`,
+    ``,
+    `## 技能脚本`,
+    `- 部分技能目录（/skills/<slug>/）下附带脚本文件，SKILL.md 末尾有脚本清单。`,
+    `- 运行脚本前先用 read_file 阅读脚本内容，确认用途后再用 execute 工具执行。`,
+    `- 运行命令以技能目录为工作目录，例如 \`python /skills/<slug>/main.py\`。`,
+    `- 脚本输出要整理进交付物，并注明数据来源。`,
   ].join("\n");
 }
 
@@ -439,6 +435,12 @@ export async function executeRun(input: ExecuteRunInput): Promise<RunRecord> {
             addActivity(lane, `读取参考文件：${filePath}`);
           } else if (call.name === "edit_file" && filePath) {
             addActivity(lane, `修订文件：${filePath}`);
+          } else if (call.name === "execute") {
+            const command =
+              call.args && typeof call.args.command === "string"
+                ? call.args.command
+                : "";
+            addActivity(lane, `执行命令：${command.length > 60 ? `${command.slice(0, 60)}…` : command}`);
           }
         }
         if (calls.length === 0 && lane) {
@@ -458,7 +460,13 @@ export async function executeRun(input: ExecuteRunInput): Promise<RunRecord> {
     await fs.mkdir(path.join(workspace, "artifacts"), { recursive: true });
 
     const models = buildModels(agent, settings, skillsById);
-    const backend = new FilesystemBackend({ rootDir: workspace, virtualMode: true });
+    const backend = new LocalShellBackend({
+      rootDir: workspace,
+      virtualMode: true,
+      timeout: 120,
+      maxOutputBytes: 200_000,
+      inheritEnv: true,
+    });
     const skillPaths = (subagent: MainAgent["subagents"][number]) =>
       subagent.skillIds
         .map((id) => skillsById.get(id)?.slug)

@@ -26,7 +26,8 @@ import { Modal, ConfirmDialog } from "../components/Modal";
 import { StatusPill } from "../components/StatusPill";
 
 export function Dashboard() {
-  const { agents, skills, runs, settings, refresh, notify, setSettingsOpen } = useApp();
+  const { agents, skills, runs, settings, refresh, notify, setSettingsOpen, user } = useApp();
+  const isAdmin = user?.role === "admin";
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [createOpen, setCreateOpen] = useState(false);
@@ -95,10 +96,12 @@ export function Dashboard() {
           <span>
             <strong>演示模式</strong> · 本地确定性模型会完整执行拆解、分派与汇总，无需 API Key。
           </span>
-          <button type="button" className="notice-action" onClick={() => setSettingsOpen(true)}>
-            接入真实模型
-            <ArrowRight size={13} />
-          </button>
+          {isAdmin ? (
+            <button type="button" className="notice-action" onClick={() => setSettingsOpen(true)}>
+              接入真实模型
+              <ArrowRight size={13} />
+            </button>
+          ) : null}
         </div>
       ) : null}
 

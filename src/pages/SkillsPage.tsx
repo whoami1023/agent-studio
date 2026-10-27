@@ -1,17 +1,21 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   ChevronDown,
   ChevronUp,
+  FileCode2,
   Library,
   Pencil,
+  Play,
   Plus,
   Search,
   Sparkles,
   Trash2,
+  Upload,
   Wand2,
+  X,
 } from "lucide-react";
-import type { Skill, SkillInput } from "../../shared/types";
+import type { ScriptRunResult, Skill, SkillInput, SkillScript } from "../../shared/types";
 import { api } from "../api";
 import { useApp } from "../state";
 import { cx, relativeTime } from "../lib/format";
@@ -22,6 +26,7 @@ interface SkillForm {
   slug: string;
   description: string;
   instructions: string;
+  scripts: SkillScript[];
 }
 
 const emptyForm: SkillForm = {
@@ -29,9 +34,45 @@ const emptyForm: SkillForm = {
   slug: "",
   description: "",
   instructions: "",
+  scripts: [],
 };
 
 const SLUG_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
+const MAX_SCRIPT_FILES = 20;
+const MAX_SCRIPT_BYTES = 64 * 1024;
+
+function scriptLanguage(fileName: string): string {
+  const ext = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
+  switch (ext) {
+    case ".py":
+      return "python";
+    case ".js":
+    case ".mjs":
+    case ".cjs":
+      return "javascript";
+    case ".ts":
+    case ".mts":
+    case ".cts":
+      return "typescript";
+    case ".sh":
+    case ".bash":
+    case ".zsh":
+      return "shell";
+    case ".bat":
+    case ".cmd":
+      return "batch";
+    case ".ps1":
+      return "powershell";
+    default:
+      return "text";
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
 
 export function SkillsPage() {
   const { skills, agents, refresh, notify } = useApp();
@@ -44,6 +85,12 @@ export function SkillsPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<Skill | null>(null);
   const [busy, setBusy] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [runningPath, setRunningPath] = useState<string | null>(null);
+  const [scriptOutput, setScriptOutput] = useState<ScriptRunResult | null>(null);
+  const [runError, setRunError] = useState("");
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const scriptInputRef = useRef<HTMLInputElement>(null);
 
   const refCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -75,6 +122,8 @@ export function SkillsPage() {
     setEditing(null);
     setForm(emptyForm);
     setFormError("");
+    setScriptOutput(null);
+    setRunError("");
     setFormOpen(true);
   }
 
@@ -85,9 +134,83 @@ export function SkillsPage() {
       slug: skill.slug,
       description: skill.description,
       instructions: skill.instructions,
+      scripts: [...(skill.scripts ?? [])],
     });
     setFormError("");
+    setScriptOutput(null);
+    setRunError("");
     setFormOpen(true);
+  }
+
+  async function handleImportFile(files: FileList | null) {
+    const file = files?.[0];
+    if (!file || importing) return;
+    setImporting(true);
+    try {
+      const { skill, skipped } = await api.importSkill(file);
+      await refresh();
+      const skippedNote =
+        skipped.length > 0 ? `，已跳过 ${skipped.length} 个不支持的文件（${skipped.slice(0, 3).join("、")}${skipped.length > 3 ? "…" : ""}）` : "";
+      notify(`已从 ${file.name} 导入技能「${skill.name}」${skippedNote}`, "success");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "导入失败", "error");
+    } finally {
+      setImporting(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }
+
+  async function addScriptFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const next = [...form.scripts];
+    const errors: string[] = [];
+    for (const file of Array.from(files)) {
+      if (next.length >= MAX_SCRIPT_FILES) {
+        errors.push("脚本文件最多 20 个");
+        break;
+      }
+      if (next.some((script) => script.path === file.name)) {
+        errors.push(`文件已存在：${file.name}`);
+        continue;
+      }
+      if (file.size > MAX_SCRIPT_BYTES) {
+        errors.push(`${file.name} 超过 64KB 上限`);
+        continue;
+      }
+      const content = await file.text();
+      if (content.includes("\u0000")) {
+        errors.push(`${file.name} 不是文本文件`);
+        continue;
+      }
+      next.push({
+        path: file.name,
+        language: scriptLanguage(file.name),
+        size: file.size,
+        content,
+      });
+    }
+    setForm({ ...form, scripts: next });
+    setFormError(errors.join("；"));
+  }
+
+  function removeScript(path: string) {
+    setForm({ ...form, scripts: form.scripts.filter((script) => script.path !== path) });
+    if (scriptOutput?.path === path) setScriptOutput(null);
+  }
+
+  async function runScript(script: SkillScript) {
+    if (!editing || runningPath) return;
+    setRunningPath(script.path);
+    setRunError("");
+    setScriptOutput(null);
+    try {
+      const { result } = await api.runSkillScript(editing.id, script.path);
+      setScriptOutput(result);
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "脚本运行失败");
+    } finally {
+      setRunningPath(null);
+    }
   }
 
   async function saveSkill() {
@@ -111,7 +234,12 @@ export function SkillsPage() {
     setSaving(true);
     setFormError("");
     try {
-      const input: SkillInput = { name, description, instructions };
+      const input: SkillInput = {
+        name,
+        description,
+        instructions,
+        scripts: form.scripts,
+      };
       if (editing) {
         await api.updateSkill(editing.id, input);
       } else {
@@ -160,10 +288,29 @@ export function SkillsPage() {
             {filtered.length} / {skills.length}
           </span>
         </div>
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
-          <Plus size={15} />
-          新建技能
-        </button>
+        <div className="toolbar-actions">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".zip,application/zip,application/x-zip-compressed"
+            hidden
+            onChange={(event) => void handleImportFile(event.target.files)}
+          />
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => importInputRef.current?.click()}
+            disabled={importing}
+            title="上传技能 ZIP 压缩包（含 SKILL.md 说明与脚本文件）"
+          >
+            <Upload size={15} />
+            {importing ? "导入中…" : "导入技能"}
+          </button>
+          <button type="button" className="btn btn-primary" onClick={openCreate}>
+            <Plus size={15} />
+            新建技能
+          </button>
+        </div>
       </div>
 
       <section className="stat-rail" aria-label="技能概览">
@@ -225,6 +372,7 @@ export function SkillsPage() {
             {filtered.map((skill) => {
               const expanded = expandedId === skill.id;
               const references = refCounts.get(skill.id) ?? 0;
+              const scripts = skill.scripts ?? [];
               return (
                 <div
                   key={skill.id}
@@ -240,6 +388,12 @@ export function SkillsPage() {
                         <span className={cx("tag", skill.builtin ? "tag-muted" : "tag-accent")}>
                           {skill.builtin ? "内置" : "自定义"}
                         </span>
+                        {scripts.length > 0 ? (
+                          <span className="tag tag-script">
+                            <FileCode2 size={11} />
+                            {scripts.length} 脚本
+                          </span>
+                        ) : null}
                       </span>
                       <span className="skill-slug mono">/{skill.slug}</span>
                     </span>
@@ -286,6 +440,16 @@ export function SkillsPage() {
                         <span className="mono">{skill.instructions.length} chars</span>
                       </div>
                       <pre className="skill-instructions">{skill.instructions}</pre>
+                      {scripts.length > 0 ? (
+                        <div className="skill-scripts-strip">
+                          <span className="skill-scripts-label">附带脚本</span>
+                          {scripts.map((script) => (
+                            <span key={script.path} className="skill-script-chip mono">
+                              {script.path}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -399,6 +563,120 @@ export function SkillsPage() {
               会写入 SKILL.md 正文，子智能体在开始工作前加载。用 Markdown 列表写清步骤与输出结构。
             </span>
           </label>
+          <div className="field">
+            <div className="field-label-row">
+              <span className="field-label">脚本文件（可选）</span>
+              <span className="field-hint">
+                {form.scripts.length}/{MAX_SCRIPT_FILES} · 单个 ≤ 64KB · 保存后可在运行时被
+                execute 工具调用
+              </span>
+            </div>
+            {form.scripts.length === 0 ? (
+              <div className="script-empty">
+                <FileCode2 size={15} />
+                暂无脚本。脚本会随技能写入 /skills/&lt;slug&gt;/ 目录，子智能体可直接执行。
+              </div>
+            ) : (
+              <div className="script-list">
+                {form.scripts.map((script) => {
+                  const saved = Boolean(editing?.scripts?.some((item) => item.path === script.path));
+                  return (
+                    <div key={script.path} className="script-item">
+                      <span className="script-item-icon">
+                        <FileCode2 size={14} />
+                      </span>
+                      <span className="script-item-copy">
+                        <span className="script-item-path mono">{script.path}</span>
+                        <span className="script-item-meta mono">
+                          {script.language} · {formatBytes(script.size)}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        className="icon-btn icon-btn-sm"
+                        onClick={() => void runScript(script)}
+                        disabled={!saved || runningPath !== null}
+                        title={saved ? "试运行脚本" : "保存技能后即可试运行"}
+                        aria-label={`运行 ${script.path}`}
+                      >
+                        {runningPath === script.path ? (
+                          <span className="spin-dot" aria-hidden="true" />
+                        ) : (
+                          <Play size={13} />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn icon-btn-sm icon-btn-danger"
+                        onClick={() => removeScript(script.path)}
+                        aria-label={`移除 ${script.path}`}
+                        title="移除"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {runError ? <div className="form-error">{runError}</div> : null}
+            {scriptOutput ? (
+              <div
+                className={cx(
+                  "script-run-output",
+                  scriptOutput.timedOut
+                    ? "is-error"
+                    : scriptOutput.exitCode === 0
+                      ? "is-ok"
+                      : "is-error",
+                )}
+              >
+                <div className="script-run-head">
+                  <span className="mono">/{scriptOutput.path}</span>
+                  <span className="mono">
+                    {scriptOutput.timedOut
+                      ? "超时中止"
+                      : `退出码 ${scriptOutput.exitCode}`}{" "}
+                    · {scriptOutput.durationMs}ms
+                  </span>
+                </div>
+                <pre className="script-run-body">
+                  {[
+                    scriptOutput.stdout.trim(),
+                    scriptOutput.stderr.trim()
+                      ? `[stderr]\n${scriptOutput.stderr.trim()}`
+                      : "",
+                  ]
+                    .filter(Boolean)
+                    .join("\n") || "（无输出）"}
+                </pre>
+              </div>
+            ) : null}
+            <input
+              ref={scriptInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(event) => {
+                void addScriptFiles(event.target.files);
+                if (scriptInputRef.current) scriptInputRef.current.value = "";
+              }}
+            />
+            <div className="script-add-row">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => scriptInputRef.current?.click()}
+                disabled={form.scripts.length >= MAX_SCRIPT_FILES}
+              >
+                <Upload size={14} />
+                添加脚本文件
+              </button>
+              <span className="field-hint">
+                支持 Python / Node.js / Shell / Batch / PowerShell 等文本脚本
+              </span>
+            </div>
+          </div>
           <div className="form-hint-card">
             <Sparkles size={15} />
             技能只提供方法，不绑定模型。同一个技能可以被多个子智能体复用。

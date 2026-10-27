@@ -2,12 +2,78 @@ import { AIMessage, type BaseMessage } from "@langchain/core/messages";
 import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { CallbackManagerForLLMRun } from "@langchain/core/callbacks/manager";
 import type { ChatResult } from "@langchain/core/outputs";
-import type { MainAgent, Skill, SubAgentConfig, TodoItem } from "../shared/types.js";
+import type {
+  MainAgent,
+  ScriptRunResult,
+  Skill,
+  SubAgentConfig,
+  TodoItem,
+} from "../shared/types.js";
+import { runScriptInDir, withSkillTempDir } from "./scriptRunner.js";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const short = (text: string, max = 48) =>
   text.length > max ? `${text.slice(0, max)}…` : text;
+
+const excerpt = (text: string, max = 1600) =>
+  text.length > max ? `${text.slice(0, max)}…（输出已截断）` : text;
+
+async function runSkillScripts(skills: Skill[]): Promise<ScriptRunResult[]> {
+  const results: ScriptRunResult[] = [];
+  const maxScripts = 3;
+  for (const skill of skills) {
+    for (const script of skill.scripts ?? []) {
+      if (results.length >= maxScripts) return results;
+      try {
+        results.push(
+          await withSkillTempDir(skill, (dir) =>
+            runScriptInDir(script, dir, { timeoutMs: 20_000, maxOutputBytes: 32 * 1024 }),
+          ),
+        );
+      } catch (error) {
+        results.push({
+          path: script.path,
+          exitCode: -1,
+          stdout: "",
+          stderr: error instanceof Error ? error.message : String(error),
+          durationMs: 0,
+          timedOut: false,
+        });
+      }
+    }
+  }
+  return results;
+}
+
+function scriptResultsSection(results: ScriptRunResult[], skillNames: string[]): string {
+  if (results.length === 0) return "";
+  const blocks = results.map((result) => {
+    const status =
+      result.timedOut
+        ? "超时中止"
+        : result.exitCode === 0
+          ? `退出码 0`
+          : `退出码 ${result.exitCode}`;
+    const output = (result.stdout || result.stderr).trim();
+    return [
+      `### \`${result.path}\``,
+      ``,
+      `> 运行状态：${status} · 耗时 ${result.durationMs}ms`,
+      ``,
+      output ? "```text" : "",
+      output ? excerpt(output) : "（无输出）",
+      output ? "```" : "",
+    ].join("\n");
+  });
+  return [
+    `## 脚本执行结果（演示模式实跑）`,
+    ``,
+    `演示模式实际执行了技能（${skillNames.join("、")}）附带的 ${results.length} 个脚本，输出如下，可直接作为交付依据。`,
+    ``,
+    ...blocks,
+  ].join("\n");
+}
 
 const firstLine = (text: string) =>
   text
@@ -47,11 +113,11 @@ function agentTasks(agent: MainAgent): SubagentTask[] {
     artifactSlug: `sub-${index + 1}`,
   }));
 }
-function subagentDeliverable(
+async function subagentDeliverable(
   task: string,
   subagent: SubAgentConfig,
   skills: Skill[],
-): string {
+): Promise<string> {
   const skillNames = skills.map((skill) => skill.name);
   const guidance = skills.flatMap((skill) => {
     const bullets = bulletLines(skill.instructions, 2);
@@ -59,6 +125,11 @@ function subagentDeliverable(
       ? bullets.map((line) => `**${skill.name}**：${line}`)
       : [`**${skill.name}**：${firstLine(skill.instructions)}`];
   });
+  const scriptResults = await runSkillScripts(skills);
+  const scriptSection = scriptResultsSection(
+    scriptResults,
+    skills.filter((skill) => (skill.scripts ?? []).length > 0).map((skill) => skill.name),
+  );
 
   const findings = [
     `任务目标是「${short(task, 72)}」，本角色聚焦于${subagent.description.replace(/[。.]$/, "")}。`,
@@ -88,6 +159,7 @@ function subagentDeliverable(
     ``,
     ...recommendations.map((line) => `- ${line}`),
     ``,
+    ...(scriptSection ? [scriptSection, ""] : []),
     `## 风险与待确认`,
     ``,
     `- 以上结论基于任务描述与现有技能约束推导，演示模式未接入外部数据源；真实执行时应补充一手资料。`,
@@ -428,20 +500,30 @@ export class DemoChatModel extends BaseChatModel {
         .trim() || task;
 
     if (!this.cachedDeliverable) {
-      this.cachedDeliverable = subagentDeliverable(brief, subagent, skills);
+      this.cachedDeliverable = await subagentDeliverable(brief, subagent, skills);
     }
 
     const aiMessages = messages.filter((message) => message.getType() === "ai");
     if (aiMessages.length === 0) {
       await this.latency(760 + (Date.now() - this.startedAt) % 260);
       const artifactSlug = this.options.artifactSlug ?? "artifact";
+      const skillLabel =
+        skills.length > 0
+          ? skills
+              .map((skill) =>
+                (skill.scripts ?? []).length > 0
+                  ? `${skill.name}（含 ${skill.scripts.length} 个脚本）`
+                  : skill.name,
+              )
+              .join("、")
+          : "通用能力";
       const header = [
         `# ${subagent.name} · 子任务交付`,
         "",
         `> ${short(brief.replace(/\n/g, " "), 160)}`,
         "",
         `**职责**：${subagent.description}`,
-        `**技能**：${skills.length > 0 ? skills.map((skill) => skill.name).join("、") : "通用能力"}`,
+        `**技能**：${skillLabel}`,
         "",
         "---",
         "",

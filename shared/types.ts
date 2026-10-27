@@ -2,17 +2,43 @@ export type ProviderMode = "demo" | "openai";
 
 export type TodoStatus = "pending" | "in_progress" | "completed";
 
+export type UserRole = "admin" | "user";
+
+export interface PublicUser {
+  id: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  disabled: boolean;
+  createdAt: string;
+}
+
+export interface AdminUserEntry extends PublicUser {
+  agentCount: number;
+  skillCount: number;
+  runCount: number;
+}
+
 export interface TodoItem {
   content: string;
   status: TodoStatus;
 }
 
+export interface SkillScript {
+  path: string;
+  language: string;
+  size: number;
+  content: string;
+}
+
 export interface Skill {
   id: string;
+  ownerId: string;
   slug: string;
   name: string;
   description: string;
   instructions: string;
+  scripts: SkillScript[];
   builtin: boolean;
   createdAt: string;
   updatedAt: string;
@@ -28,6 +54,7 @@ export interface SubAgentConfig {
 
 export interface MainAgent {
   id: string;
+  ownerId: string;
   name: string;
   description: string;
   systemPrompt: string;
@@ -69,6 +96,7 @@ export type RunStatus = "running" | "completed" | "failed";
 
 export interface RunRecord {
   id: string;
+  ownerId: string;
   agentId: string;
   agentName: string;
   task: string;
@@ -105,10 +133,16 @@ export interface SettingsUpdate {
 }
 
 export interface BootstrapPayload {
+  user: PublicUser;
   agents: MainAgent[];
   skills: Skill[];
   runs: RunRecord[];
   settings: PublicSettings;
+}
+
+export interface LoginPayload {
+  token: string;
+  user: PublicUser;
 }
 
 export type RunEvent =
@@ -147,4 +181,21 @@ export interface SkillInput {
   slug?: string;
   description: string;
   instructions: string;
+  scripts?: SkillScript[];
+}
+
+export interface SkillImportPayload {
+  fileName: string;
+  dataBase64: string;
+  name?: string;
+  description?: string;
+}
+
+export interface ScriptRunResult {
+  path: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
 }

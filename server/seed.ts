@@ -94,7 +94,9 @@ const BUILTIN_SKILLS: BuiltinSkillSeed[] = [
   },
 ];
 
-export function builtinSkills(now = new Date().toISOString()): Skill[] {
+export function builtinSkills(
+  now = new Date().toISOString(),
+): Array<Omit<Skill, "ownerId" | "scripts">> {
   return BUILTIN_SKILLS.map((skill, index) => ({
     id: `skill-builtin-${skill.slug}`,
     slug: skill.slug,
@@ -107,7 +109,9 @@ export function builtinSkills(now = new Date().toISOString()): Skill[] {
   }));
 }
 
-export function sampleAgents(now = new Date().toISOString()): MainAgent[] {
+export function sampleAgents(
+  now = new Date().toISOString(),
+): Array<Omit<MainAgent, "ownerId">> {
   return [
     {
       id: "agent-sample-launch",

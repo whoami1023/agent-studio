@@ -20,6 +20,7 @@
     "@langchain/openai": "^1.7.0",
     "deepagents": "^1.15.1",
     "express": "^5.3.0",
+    "fflate": "^0.8.3",
     "langchain": "^1.5.19",
     "langsmith": "^0.9.0",
     "lucide-react": "^1.61.0",
