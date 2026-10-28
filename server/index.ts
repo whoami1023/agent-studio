@@ -318,6 +318,7 @@ app.post("/api/agents", async (req, res) => {
     description: parsed.data.description,
     systemPrompt: parsed.data.systemPrompt?.trim() ?? "",
     subagents,
+    builtin: false,
     createdAt: now,
     updatedAt: now,
   };
@@ -391,12 +392,18 @@ app.put("/api/agents/:id", async (req, res) => {
 app.delete("/api/agents/:id", async (req, res) => {
   const user = req.user!;
   const removed = await mutateStore((data) => {
-    const before = data.agents.length;
-    data.agents = data.agents.filter(
-      (agent) => agent.id !== req.params.id || agent.ownerId !== user.id,
+    const agent = data.agents.find(
+      (item) => item.id === req.params.id && item.ownerId === user.id,
     );
-    return before !== data.agents.length;
+    if (!agent) return null;
+    if (agent.builtin) return "builtin";
+    data.agents = data.agents.filter((item) => item.id !== agent.id);
+    return "removed";
   });
+  if (removed === "builtin") {
+    userError(res, 400, "内置智能体组不可删除，但可以编辑内容");
+    return;
+  }
   if (!removed) {
     userError(res, 404, "智能体不存在");
     return;
@@ -844,9 +851,30 @@ app.post("/api/admin/users", async (req, res) => {
     createdAt: now,
     updatedAt: now,
   }));
+  const skillIdMap = new Map(
+    adminBuiltins.map((skill, index) => [skill.id, clonedSkills[index].id]),
+  );
+  const adminBuiltinAgents = store.agents.filter(
+    (agent) => agent.builtin && agent.ownerId === req.user!.id,
+  );
+  const clonedAgents: MainAgent[] = adminBuiltinAgents.map((agent) => ({
+    ...agent,
+    id: createId("agent"),
+    ownerId: user.id,
+    subagents: agent.subagents.map((subagent) => ({
+      ...subagent,
+      id: createId("sub"),
+      skillIds: subagent.skillIds
+        .map((id) => skillIdMap.get(id))
+        .filter((id): id is string => Boolean(id)),
+    })),
+    createdAt: now,
+    updatedAt: now,
+  }));
   await mutateStore((data) => {
     data.users.push(user);
     data.skills.push(...clonedSkills);
+    data.agents.push(...clonedAgents);
   });
   res.status(201).json({ user: toPublicUser(user) });
 });

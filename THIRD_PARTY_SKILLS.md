@@ -15,6 +15,12 @@ Agent Studio 的六个内置技能是下列 MIT 许可开源技能的简体中�
 
 搜索类技能（`web-search`、`google-search`、`osint-search`）通过 Python 包 `ddgs` 执行无需密钥的网页搜索。`ddgs` 采用 MIT 许可：[deedy5/ddgs](https://github.com/deedy5/ddgs)。
 
+## 办公文档技能
+
+四个办公文档技能（`word`、`excel`、`ppt`、`pdf`）随仓库分发，内容来自 [anthropics/skills](https://github.com/anthropics/skills) 的 `document-skills` 目录（docx / xlsx / pptx / pdf），按上游原样打包（SKILL.md 与脚本未做本地化修改）。上游为专有许可，本项目仅限用户自用且不进行商用；如需商用请自行替换为等价的开源实现。
+
+`excel` 技能的 `recalc.py`（公式重算）依赖 LibreOffice，部署机未安装时该脚本无法执行，其余脚本不受影响。
+
 ## 主要修改
 
 - 全文译为简体中文，并按目标应用场景调整术语。

@@ -59,9 +59,9 @@ export interface MainAgent {
   description: string;
   systemPrompt: string;
   subagents: SubAgentConfig[];
+  builtin: boolean;
   createdAt: string;
   updatedAt: string;
-  sample?: boolean;
 }
 
 export type DelegationStatus =
@@ -166,7 +166,6 @@ export interface AgentInput {
   description: string;
   systemPrompt?: string;
   subagents?: SubAgentInput[];
-  sample?: boolean;
 }
 
 export interface SubAgentInput {

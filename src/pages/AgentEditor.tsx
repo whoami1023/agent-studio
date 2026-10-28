@@ -247,15 +247,17 @@ export function AgentEditor() {
           </div>
         </div>
         <div className="content-head-actions">
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={() => setDeleteAgentOpen(true)}
-            aria-label="删除智能体"
-            title="删除智能体"
-          >
-            <Trash2 size={15} />
-          </button>
+          {draft.builtin ? null : (
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setDeleteAgentOpen(true)}
+              aria-label="删除智能体"
+              title="删除智能体"
+            >
+              <Trash2 size={15} />
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-secondary"

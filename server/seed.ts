@@ -1,13 +1,16 @@
-import type { MainAgent, Skill } from "../shared/types.js";
+import type { MainAgent, Skill, SkillScript } from "../shared/types.js";
+import { OFFICE_SKILL_SEEDS } from "./officeSkillSeeds.js";
+import { SEARCH_SKILL_SEEDS } from "./searchSkillSeeds.js";
 
 interface BuiltinSkillSeed {
   slug: string;
   name: string;
   description: string;
   instructions: string;
+  scripts?: SkillScript[];
 }
 
-export const BUILTIN_SKILL_VERSION = 2;
+export const BUILTIN_SKILL_VERSION = 4;
 
 const BUILTIN_SKILLS: BuiltinSkillSeed[] = [
   {
@@ -371,17 +374,20 @@ const BUILTIN_SKILLS: BuiltinSkillSeed[] = [
       "计划保存后交给用户评审；在用户确认执行方式之前不要开始实现。多智能体场景下，把任务依赖、可并行分支与验收标准写进计划，再分派给执行者。",
     ].join("\n"),
   },
+  ...SEARCH_SKILL_SEEDS,
+  ...OFFICE_SKILL_SEEDS,
 ];
 
 export function builtinSkills(
   now = new Date().toISOString(),
-): Array<Omit<Skill, "ownerId" | "scripts">> {
-  return BUILTIN_SKILLS.map((skill, index) => ({
+): Array<Omit<Skill, "ownerId">> {
+  return BUILTIN_SKILLS.map((skill) => ({
     id: `skill-builtin-${skill.slug}`,
     slug: skill.slug,
     name: skill.name,
     description: skill.description,
     instructions: skill.instructions,
+    scripts: skill.scripts ?? [],
     builtin: true,
     createdAt: now,
     updatedAt: now,
@@ -404,7 +410,12 @@ function sampleAgentsV1(now: string): Array<Omit<MainAgent, "ownerId">> {
           description:
             "调研目标市场、竞品与用户需求，输出可追溯的市场洞察与机会判断。",
           systemPrompt: "",
-          skillIds: ["skill-builtin-research", "skill-builtin-writing"],
+          skillIds: [
+            "skill-builtin-research",
+            "skill-builtin-writing",
+            "skill-builtin-google-search",
+            "skill-builtin-web-search",
+          ],
         },
         {
           id: "sub-launch-data",
@@ -412,7 +423,11 @@ function sampleAgentsV1(now: string): Array<Omit<MainAgent, "ownerId">> {
           description:
             "建立发布相关的指标口径，评估增长假设、敏感性与数据风险。",
           systemPrompt: "",
-          skillIds: ["skill-builtin-data-analysis", "skill-builtin-planning"],
+          skillIds: [
+            "skill-builtin-data-analysis",
+            "skill-builtin-planning",
+            "skill-builtin-excel",
+          ],
         },
         {
           id: "sub-launch-risk",
@@ -425,7 +440,7 @@ function sampleAgentsV1(now: string): Array<Omit<MainAgent, "ownerId">> {
       ],
       createdAt: now,
       updatedAt: now,
-      sample: true,
+      builtin: false,
     },
     {
       id: "agent-sample-review",
@@ -462,7 +477,7 @@ function sampleAgentsV1(now: string): Array<Omit<MainAgent, "ownerId">> {
       ],
       createdAt: now,
       updatedAt: now,
-      sample: true,
+      builtin: false,
     },
   ];
 }
@@ -483,7 +498,14 @@ export function sampleAgentsV2(now: string): Array<Omit<MainAgent, "ownerId">> {
           description:
             "通过公开网络信息收集调研对象的基础资料、活动轨迹与关联关系，每条信息标注来源与时间。",
           systemPrompt: "",
-          skillIds: ["skill-builtin-research", "skill-builtin-writing"],
+          skillIds: [
+            "skill-builtin-research",
+            "skill-builtin-writing",
+            "skill-builtin-google-search",
+            "skill-builtin-web-search",
+            "skill-builtin-osint-search",
+            "skill-builtin-pdf",
+          ],
         },
         {
           id: "sub-oss-verify",
@@ -491,7 +513,12 @@ export function sampleAgentsV2(now: string): Array<Omit<MainAgent, "ownerId">> {
           description:
             "对收集到的信息进行多源交叉比对与可信度评估，区分事实、推断与传闻，剔除不可靠信息。",
           systemPrompt: "",
-          skillIds: ["skill-builtin-data-analysis", "skill-builtin-critique"],
+          skillIds: [
+            "skill-builtin-data-analysis",
+            "skill-builtin-critique",
+            "skill-builtin-web-search",
+            "skill-builtin-osint-search",
+          ],
         },
         {
           id: "sub-oss-risk",
@@ -504,7 +531,7 @@ export function sampleAgentsV2(now: string): Array<Omit<MainAgent, "ownerId">> {
       ],
       createdAt: now,
       updatedAt: now,
-      sample: true,
+      builtin: true,
     },
     {
       id: "agent-sample-code-review",
@@ -541,7 +568,7 @@ export function sampleAgentsV2(now: string): Array<Omit<MainAgent, "ownerId">> {
       ],
       createdAt: now,
       updatedAt: now,
-      sample: true,
+      builtin: false,
     },
   ];
 }
@@ -551,3 +578,5 @@ export function sampleAgents(
 ): Array<Omit<MainAgent, "ownerId">> {
   return [...sampleAgentsV1(now), ...sampleAgentsV2(now)];
 }
+
+export const BUILTIN_AGENT_IDS = new Set(["agent-sample-oss-research"]);

@@ -196,7 +196,7 @@ export function Dashboard() {
                     <div className="agent-card-title">
                       <div className="agent-name-row">
                         <h3 className="agent-name">{agent.name}</h3>
-                        {agent.sample ? <span className="tag tag-muted">示例</span> : null}
+                        {agent.builtin ? <span className="tag tag-muted">内置</span> : null}
                       </div>
                       <span className="agent-card-meta">
                         {lastRun ? `${relativeTime(lastRun.startedAt)}运行` : "尚无运行记录"}
@@ -247,18 +247,20 @@ export function Dashboard() {
                       </span>
                     </div>
                     <div className="agent-foot-actions">
-                      <button
-                        type="button"
-                        className="icon-btn icon-btn-sm"
-                        aria-label={`删除 ${agent.name}`}
-                        title="删除"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setDeleting(agent);
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {agent.builtin ? null : (
+                        <button
+                          type="button"
+                          className="icon-btn icon-btn-sm"
+                          aria-label={`删除 ${agent.name}`}
+                          title="删除"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setDeleting(agent);
+                          }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="icon-btn icon-btn-sm"

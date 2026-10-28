@@ -15,6 +15,7 @@ import {
   type StoredUser,
 } from "./auth.js";
 import {
+  BUILTIN_AGENT_IDS,
   BUILTIN_SKILL_VERSION,
   builtinSkills,
   sampleAgents,
@@ -32,6 +33,7 @@ export interface StoreData {
   version: 2;
   sampleSeedVersion: number;
   builtinSkillVersion: number;
+  builtinAgentVersion: number;
   users: StoredUser[];
   sessions: StoredSession[];
   agents: MainAgent[];
@@ -46,6 +48,7 @@ const STORE_PATH = path.join(DATA_DIR, "store.json");
 const MAX_RUNS = 60;
 const SAMPLE_SEED_VERSION = 2;
 const CUSTOM_SKILL_PROMOTION_VERSION = 2;
+const BUILTIN_AGENT_VERSION = 1;
 
 const defaultSettings = (): StoredSettings => ({
   mode: "demo",
@@ -89,7 +92,6 @@ function seededStore(): StoreData {
   const skills = builtinSkills(now).map((skill) => ({
     ...skill,
     ownerId: admin.id,
-    scripts: [],
   }));
   const agents = sampleAgents(now).map((agent) => ({
     ...agent,
@@ -99,6 +101,7 @@ function seededStore(): StoreData {
     version: 2,
     sampleSeedVersion: SAMPLE_SEED_VERSION,
     builtinSkillVersion: BUILTIN_SKILL_VERSION,
+    builtinAgentVersion: BUILTIN_AGENT_VERSION,
     users: [admin],
     sessions: [],
     agents,
@@ -126,6 +129,7 @@ function migrateToV2(parsed: Record<string, unknown>): StoreData {
     version: 2,
     sampleSeedVersion: 1,
     builtinSkillVersion: 0,
+    builtinAgentVersion: 0,
     users: [admin],
     sessions: [],
     agents: legacyAgents.map((agent) => ({ ...agent, ownerId })),
@@ -164,11 +168,17 @@ function ensureBuiltinSkills(data: StoreData): boolean {
       skill.description === seed.description &&
       skill.instructions === seed.instructions
     ) {
+      if (JSON.stringify(skill.scripts) !== JSON.stringify(seed.scripts)) {
+        skill.scripts = seed.scripts;
+        skill.updatedAt = now;
+        refreshed = true;
+      }
       continue;
     }
     skill.name = seed.name;
     skill.description = seed.description;
     skill.instructions = seed.instructions;
+    skill.scripts = seed.scripts;
     skill.updatedAt = now;
     refreshed = true;
   }
@@ -178,7 +188,7 @@ function ensureBuiltinSkills(data: StoreData): boolean {
     const existingSlugs = new Set(data.skills.map((skill) => skill.slug));
     for (const seed of fresh) {
       if (existingIds.has(seed.id) || existingSlugs.has(seed.slug)) continue;
-      data.skills.push({ ...seed, ownerId: admin.id, scripts: [] });
+      data.skills.push({ ...seed, ownerId: admin.id });
       refreshed = true;
     }
   }
@@ -201,11 +211,41 @@ function ensureBuiltinSkills(data: StoreData): boolean {
   return true;
 }
 
+type LegacyAgent = MainAgent & { sample?: boolean };
+
+function ensureBuiltinAgents(data: StoreData): boolean {
+  if (data.builtinAgentVersion >= BUILTIN_AGENT_VERSION) return false;
+  const now = new Date().toISOString();
+  let changed = 0;
+  for (const agent of data.agents) {
+    if (agent.ownerId !== ADMIN_USER_ID) continue;
+    const isBuiltin = BUILTIN_AGENT_IDS.has(agent.id);
+    if (agent.builtin === isBuiltin) {
+      delete (agent as LegacyAgent).sample;
+      continue;
+    }
+    agent.builtin = isBuiltin;
+    agent.updatedAt = now;
+    delete (agent as LegacyAgent).sample;
+    changed += 1;
+  }
+  data.builtinAgentVersion = BUILTIN_AGENT_VERSION;
+  if (changed > 0) {
+    console.log(`store.json: 已将 ${changed} 个智能体组标记为内置（仅开源调研组）`);
+  }
+  return true;
+}
+
 async function load(): Promise<StoreData> {
   if (cache) return cache;
   await ensureDirs();
   try {
-    const raw = await fs.readFile(STORE_PATH, "utf8");
+    const raw = await readStoreFile();
+    if (raw === null) {
+      cache = seededStore();
+      await persist(cache);
+      return cache;
+    }
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (parsed.version !== 2 || !Array.isArray(parsed.users)) {
       cache = migrateToV2(parsed);
@@ -217,6 +257,8 @@ async function load(): Promise<StoreData> {
           typeof parsed.sampleSeedVersion === "number" ? parsed.sampleSeedVersion : 1,
         builtinSkillVersion:
           typeof parsed.builtinSkillVersion === "number" ? parsed.builtinSkillVersion : 0,
+        builtinAgentVersion:
+          typeof parsed.builtinAgentVersion === "number" ? parsed.builtinAgentVersion : 0,
         users: parsed.users as StoredUser[],
         sessions: Array.isArray(parsed.sessions) ? (parsed.sessions as StoredSession[]) : [],
         agents: Array.isArray(parsed.agents) ? (parsed.agents as MainAgent[]) : [],
@@ -230,9 +272,11 @@ async function load(): Promise<StoreData> {
       console.log("store.json: 已补种内置示例智能体（开源调研组、代码审查组）");
     }
     const builtinsRefreshed = ensureBuiltinSkills(cache);
+    const builtinAgentsPromoted = ensureBuiltinAgents(cache);
     if (
       samplesAdded ||
       builtinsRefreshed ||
+      builtinAgentsPromoted ||
       parsed.version !== 2 ||
       !Array.isArray(parsed.users)
     ) {
@@ -240,12 +284,6 @@ async function load(): Promise<StoreData> {
     }
     return cache;
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      cache = seededStore();
-      await persist(cache);
-      return cache;
-    }
     const backup = `${STORE_PATH}.corrupt-${Date.now()}`;
     await fs.copyFile(STORE_PATH, backup).catch(() => undefined);
     console.warn(`store.json could not be parsed; backed up to ${backup}`);
@@ -259,15 +297,33 @@ async function persist(data: StoreData): Promise<void> {
   await ensureDirs();
   const tmp = `${STORE_PATH}.${process.pid}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(data, null, 2), "utf8");
-  try {
-    await fs.rename(tmp, STORE_PATH);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EPERM" && code !== "EEXIST" && code !== "EACCES") throw error;
-    // Windows can refuse an overwrite rename when the target is briefly locked.
-    await fs.rm(STORE_PATH, { force: true });
-    await fs.rename(tmp, STORE_PATH);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await fs.rename(tmp, STORE_PATH);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "EEXIST" && code !== "EACCES") throw error;
+      // Windows 偶发拒绝覆盖 rename（目标被短暂占用），稍候重试。
+      await new Promise((resolve) => setTimeout(resolve, 120 * (attempt + 1)));
+    }
   }
+  // 兜底：先删后 rename。两者之间 store.json 短暂缺失，load() 侧有重试，不会误判为首次启动。
+  await fs.rm(STORE_PATH, { force: true });
+  await fs.rename(tmp, STORE_PATH);
+}
+
+async function readStoreFile(): Promise<string | null> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      return await fs.readFile(STORE_PATH, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // persist() 替换文件时存在极短的无文件窗口，稍候重试而不是直接全新播种。
+      await new Promise((resolve) => setTimeout(resolve, 100 + attempt * 80));
+    }
+  }
+  return null;
 }
 
 export async function readStore(): Promise<StoreData> {
